@@ -4,125 +4,127 @@ namespace App\Controller;
 
 use App\Repository\OrderRepository;
 use App\Service\AuthService;
-use App\Service\MessageProducer;
+use GuzzleHttp\Client;
+use GuzzleHttp\Exception\GuzzleException;
 
 class OrderController
 {
     private $orderRepository;
     private $authService;
-    private $messageProducer;
+    private $httpClient;
 
     public function __construct()
     {
         $this->orderRepository = new OrderRepository();
         $this->authService = new AuthService();
-        $this->messageProducer = new MessageProducer();
+        $this->httpClient = new Client([
+            'base_uri' => getenv('PRODUCT_SERVICE_URL', 'http://product-service'),
+            'timeout'  => 5.0,
+        ]);
     }
 
     public function createOrder()
     {
-        $user = $this->authService->getAuthenticatedUser(apache_request_headers());
-        if (!$user) {
+        $userId = $this->authService->middleware();
+        if (!$userId) {
             header('HTTP/1.0 401 Unauthorized');
             echo json_encode(['error' => 'Unauthorized']);
             return;
         }
 
         $data = json_decode(file_get_contents('php://input'), true);
-        if (!isset($data['products']) || empty($data['products'])) {
+        if (!isset($data['items']) || empty($data['items'])) {
             header('HTTP/1.0 400 Bad Request');
-            echo json_encode(['error' => 'Products are required']);
+            echo json_encode(['error' => 'Order items are required']);
             return;
         }
 
         try {
-            $data['user_id'] = $user['userId'];
-            $data['status'] = 'pending';
-            $orderId = $this->orderRepository->create($data);
-            
-            // Notify other services about the new order
-            $this->messageProducer->send('order_created', [
-                'order_id' => $orderId,
-                'user_id' => $user['userId'],
-                'products' => $data['products']
-            ]);
-
-            $order = $this->orderRepository->findById($orderId);
-            echo json_encode(['order' => $order]);
-        } catch (\Exception $e) {
-            header('HTTP/1.0 500 Internal Server Error');
-            echo json_encode(['error' => 'Failed to create order']);
-        }
-    }
-
-    public function getOrder()
-    {
-        $user = $this->authService->getAuthenticatedUser(apache_request_headers());
-        if (!$user) {
-            header('HTTP/1.0 401 Unauthorized');
-            echo json_encode(['error' => 'Unauthorized']);
-            return;
-        }
-
-        $orderId = $_GET['id'] ?? null;
-        if (!$orderId) {
-            header('HTTP/1.0 400 Bad Request');
-            echo json_encode(['error' => 'Order ID is required']);
-            return;
-        }
-
-        try {
-            $order = $this->orderRepository->findById($orderId);
-            if (!$order) {
-                header('HTTP/1.0 404 Not Found');
-                echo json_encode(['error' => 'Order not found']);
-                return;
+            // Validate products and calculate total
+            $totalAmount = 0;
+            foreach ($data['items'] as &$item) {
+                $response = $this->httpClient->get("/api/products/{$item['product_id']}");
+                $product = json_decode($response->getBody(), true);
+                
+                if (!$product) {
+                    header('HTTP/1.0 404 Not Found');
+                    echo json_encode(['error' => "Product {$item['product_id']} not found"]);
+                    return;
+                }
+                
+                $item['price'] = $product['price'];
+                $totalAmount += $product['price'] * $item['quantity'];
             }
 
-            if ($order['user_id'] !== $user['userId']) {
-                header('HTTP/1.0 403 Forbidden');
-                echo json_encode(['error' => 'Access denied']);
-                return;
-            }
+            $orderData = [
+                'user_id' => $userId,
+                'total_amount' => $totalAmount,
+                'items' => $data['items']
+            ];
 
-            echo json_encode(['order' => $order]);
-        } catch (\Exception $e) {
+            $orderId = $this->orderRepository->create($orderData);
+            $order = $this->orderRepository->findById($orderId);
+            $order['items'] = $this->orderRepository->getOrderItems($orderId);
+
+            echo json_encode($order);
+
+        } catch (GuzzleException $e) {
             header('HTTP/1.0 500 Internal Server Error');
-            echo json_encode(['error' => 'Failed to fetch order']);
+            echo json_encode(['error' => 'Failed to process order']);
+            return;
         }
     }
 
-    public function listUserOrders()
+    public function getOrder(int $id)
     {
-        $user = $this->authService->getAuthenticatedUser(apache_request_headers());
-        if (!$user) {
+        $userId = $this->authService->middleware();
+        if (!$userId) {
             header('HTTP/1.0 401 Unauthorized');
             echo json_encode(['error' => 'Unauthorized']);
             return;
         }
 
-        try {
-            $orders = $this->orderRepository->findByUserId($user['userId']);
-            echo json_encode(['orders' => $orders]);
-        } catch (\Exception $e) {
-            header('HTTP/1.0 500 Internal Server Error');
-            echo json_encode(['error' => 'Failed to fetch orders']);
+        $order = $this->orderRepository->findById($id);
+        if (!$order || $order['user_id'] !== $userId) {
+            header('HTTP/1.0 404 Not Found');
+            echo json_encode(['error' => 'Order not found']);
+            return;
         }
+
+        $order['items'] = $this->orderRepository->getOrderItems($id);
+        echo json_encode($order);
     }
 
-    public function updateOrderStatus()
+    public function getUserOrders()
     {
-        $user = $this->authService->getAuthenticatedUser(apache_request_headers());
-        if (!$user) {
+        $userId = $this->authService->middleware();
+        if (!$userId) {
             header('HTTP/1.0 401 Unauthorized');
             echo json_encode(['error' => 'Unauthorized']);
             return;
         }
 
-        $orderId = $_GET['id'] ?? null;
-        if (!$orderId) {
-            header('HTTP/1.0 400 Bad Request');
-            echo json_encode(['error' => 'Order ID is required']);
+        $orders = $this->orderRepository->findByUserId($userId);
+        foreach ($orders as &$order) {
+            $order['items'] = $this->orderRepository->getOrderItems($order['id']);
+        }
+
+        echo json_encode($orders);
+    }
+
+    public function updateOrderStatus(int $id)
+    {
+        $userId = $this->authService->middleware();
+        if (!$userId) {
+            header('HTTP/1.0 401 Unauthorized');
+            echo json_encode(['error' => 'Unauthorized']);
+            return;
+        }
+
+        $order = $this->orderRepository->findById($id);
+        if (!$order || $order['user_id'] !== $userId) {
+            header('HTTP/1.0 404 Not Found');
+            echo json_encode(['error' => 'Order not found']);
             return;
         }
 
@@ -133,24 +135,13 @@ class OrderController
             return;
         }
 
-        try {
-            $success = $this->orderRepository->updateStatus($orderId, $data['status']);
-            if ($success) {
-                $order = $this->orderRepository->findById($orderId);
-                echo json_encode(['order' => $order]);
-
-                // Notify other services about the status change
-                $this->messageProducer->send('order_status_changed', [
-                    'order_id' => $orderId,
-                    'status' => $data['status']
-                ]);
-            } else {
-                header('HTTP/1.0 500 Internal Server Error');
-                echo json_encode(['error' => 'Failed to update order status']);
-            }
-        } catch (\Exception $e) {
+        if ($this->orderRepository->update($id, ['status' => $data['status']])) {
+            $updatedOrder = $this->orderRepository->findById($id);
+            $updatedOrder['items'] = $this->orderRepository->getOrderItems($id);
+            echo json_encode($updatedOrder);
+        } else {
             header('HTTP/1.0 500 Internal Server Error');
-            echo json_encode(['error' => 'Failed to update order status']);
+            echo json_encode(['error' => 'Failed to update order']);
         }
     }
 }

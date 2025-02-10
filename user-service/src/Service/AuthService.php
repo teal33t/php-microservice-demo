@@ -4,62 +4,70 @@ namespace App\Service;
 
 use Firebase\JWT\JWT;
 use Firebase\JWT\Key;
+use App\Repository\UserRepository;
 use Exception;
 
 class AuthService
 {
     private $key;
-    private $algorithm = 'HS256';
+    private $userRepository;
 
     public function __construct()
     {
-        $this->key = getenv('JWT_SECRET_KEY') ?: 'your-secret-key-change-this-in-production';
+        $this->key = getenv('JWT_SECRET', 'your-secret-key');
+        $this->userRepository = new UserRepository();
     }
 
-    public function generateToken(array $user): string
+    public function login(string $email, string $password): ?array
+    {
+        $user = $this->userRepository->findByEmail($email);
+        
+        if (!$user || !password_verify($password, $user['password'])) {
+            return null;
+        }
+
+        $token = $this->generateToken($user['id']);
+        
+        return [
+            'user' => [
+                'id' => $user['id'],
+                'email' => $user['email'],
+                'name' => $user['name']
+            ],
+            'token' => $token
+        ];
+    }
+
+    public function generateToken(int $userId): string
     {
         $payload = [
             'iss' => 'user-service',
             'iat' => time(),
             'exp' => time() + (60 * 60), // Token valid for 1 hour
-            'userId' => $user['id'],
-            'username' => $user['username']
+            'userId' => $userId
         ];
 
-        return JWT::encode($payload, $this->key, $this->algorithm);
+        return JWT::encode($payload, $this->key, 'HS256');
     }
 
-    public function verifyToken(string $token): ?array
+    public function verifyToken(string $token): ?int
     {
         try {
-            $decoded = JWT::decode($token, new Key($this->key, $this->algorithm));
-            return (array) $decoded;
+            $decoded = JWT::decode($token, new Key($this->key, 'HS256'));
+            return $decoded->userId;
         } catch (Exception $e) {
             return null;
         }
     }
 
-    public function getAuthenticatedUser(array $headers): ?array
+    public function middleware(): ?int
     {
-        $token = $this->extractTokenFromHeaders($headers);
-        if (!$token) {
+        $headers = apache_request_headers();
+        if (!isset($headers['Authorization'])) {
             return null;
         }
 
-        return $this->verifyToken($token);
-    }
-
-    private function extractTokenFromHeaders(array $headers): ?string
-    {
-        $authHeader = $headers['Authorization'] ?? null;
-        if (!$authHeader) {
-            return null;
-        }
-
-        if (preg_match('/Bearer\s+(\S+)/', $authHeader, $matches)) {
-            return $matches[1];
-        }
-
-        return null;
+        $jwt = str_replace('Bearer ', '', $headers['Authorization']);
+        return $this->verifyToken($jwt);
     }
 }

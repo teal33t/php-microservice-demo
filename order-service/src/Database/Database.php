@@ -14,7 +14,7 @@ class Database
     {
         try {
             $dsn = 'mysql:host=' . getenv('DB_HOST', 'localhost') .
-                  ';dbname=' . getenv('DB_NAME', 'user_service') .
+                  ';dbname=' . getenv('DB_NAME', 'order_service') .
                   ';charset=utf8mb4';
             $username = getenv('DB_USER', 'dbuser');
             $password = getenv('DB_PASS', 'dbpass');

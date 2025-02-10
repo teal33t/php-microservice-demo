@@ -2,8 +2,8 @@
 
 namespace App\Controller;
 
-use App\Repository\UserRepository;
 use App\Service\AuthService;
+use App\Repository\UserRepository;
 
 class UserController
 {
@@ -20,90 +20,100 @@ class UserController
     {
         $data = json_decode(file_get_contents('php://input'), true);
         
-        if (!isset($data['username']) || !isset($data['password'])) {
+        if (!isset($data['email']) || !isset($data['password'])) {
             header('HTTP/1.0 400 Bad Request');
-            echo json_encode(['error' => 'Username and password are required']);
+            echo json_encode(['error' => 'Email and password are required']);
             return;
         }
 
-        $user = $this->userRepository->verifyCredentials($data['username'], $data['password']);
-        if (!$user) {
+        $result = $this->authService->login($data['email'], $data['password']);
+        
+        if (!$result) {
             header('HTTP/1.0 401 Unauthorized');
             echo json_encode(['error' => 'Invalid credentials']);
             return;
         }
 
-        $token = $this->authService->generateToken($user);
-        echo json_encode(['token' => $token]);
+        echo json_encode($result);
     }
 
     public function register()
     {
         $data = json_decode(file_get_contents('php://input'), true);
         
-        if (!isset($data['username']) || !isset($data['password']) || !isset($data['email'])) {
+        if (!isset($data['email']) || !isset($data['password']) || !isset($data['name'])) {
             header('HTTP/1.0 400 Bad Request');
-            echo json_encode(['error' => 'Username, password and email are required']);
+            echo json_encode(['error' => 'Email, password and name are required']);
             return;
         }
 
-        try {
-            $userId = $this->userRepository->create($data);
-            $user = $this->userRepository->findById($userId);
-            echo json_encode(['user' => $user]);
-        } catch (\Exception $e) {
-            header('HTTP/1.0 500 Internal Server Error');
-            echo json_encode(['error' => 'Failed to create user']);
+        if ($this->userRepository->findByEmail($data['email'])) {
+            header('HTTP/1.0 409 Conflict');
+            echo json_encode(['error' => 'Email already exists']);
+            return;
         }
+
+        $userId = $this->userRepository->create($data);
+        $token = $this->authService->generateToken($userId);
+
+        echo json_encode([
+            'user' => [
+                'id' => $userId,
+                'email' => $data['email'],
+                'name' => $data['name']
+            ],
+            'token' => $token
+        ]);
     }
 
     public function getProfile()
     {
-        $user = $this->authService->getAuthenticatedUser(apache_request_headers());
-        if (!$user) {
+        $userId = $this->authService->middleware();
+        
+        if (!$userId) {
             header('HTTP/1.0 401 Unauthorized');
             echo json_encode(['error' => 'Unauthorized']);
             return;
         }
 
-        $userDetails = $this->userRepository->findById($user['userId']);
-        if (!$userDetails) {
+        $user = $this->userRepository->findById($userId);
+        
+        if (!$user) {
             header('HTTP/1.0 404 Not Found');
             echo json_encode(['error' => 'User not found']);
             return;
         }
 
-        echo json_encode(['user' => $userDetails]);
+        unset($user['password']);
+        echo json_encode($user);
     }
 
     public function updateProfile()
     {
-        $user = $this->authService->getAuthenticatedUser(apache_request_headers());
-        if (!$user) {
+        $userId = $this->authService->middleware();
+        
+        if (!$userId) {
             header('HTTP/1.0 401 Unauthorized');
             echo json_encode(['error' => 'Unauthorized']);
             return;
         }
 
         $data = json_decode(file_get_contents('php://input'), true);
+        
         if (empty($data)) {
             header('HTTP/1.0 400 Bad Request');
             echo json_encode(['error' => 'No data provided']);
             return;
         }
 
-        try {
-            $success = $this->userRepository->update($user['userId'], $data);
-            if ($success) {
-                $updatedUser = $this->userRepository->findById($user['userId']);
-                echo json_encode(['user' => $updatedUser]);
-            } else {
-                header('HTTP/1.0 500 Internal Server Error');
-                echo json_encode(['error' => 'Failed to update user']);
-            }
-        } catch (\Exception $e) {
+        if (!$this->userRepository->update($userId, $data)) {
             header('HTTP/1.0 500 Internal Server Error');
-            echo json_encode(['error' => 'Failed to update user']);
+            echo json_encode(['error' => 'Failed to update profile']);
+            return;
         }
+
+        $user = $this->userRepository->findById($userId);
+        unset($user['password']);
+        echo json_encode($user);
     }
 }

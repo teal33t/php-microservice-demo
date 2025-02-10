@@ -16,23 +16,13 @@ class Router
         $this->routes['POST'][$path] = $handler;
     }
 
-    public function put(string $path, $handler)
-    {
-        $this->routes['PUT'][$path] = $handler;
-    }
-
-    public function delete(string $path, $handler)
-    {
-        $this->routes['DELETE'][$path] = $handler;
-    }
-
     public function dispatch(string $method, string $path)
     {
         $handler = $this->routes[$method][$path] ?? null;
         
         if (!$handler) {
             header("HTTP/1.0 404 Not Found");
-            echo json_encode(['error' => '404 Not Found']);
+            echo json_encode(['error' => 'Not Found']);
             exit;
         }
 
@@ -50,10 +40,12 @@ class Router
                 } else {
                     header("HTTP/1.0 500 Internal Server Error");
                     echo json_encode(['error' => 'Method not found']);
+                    exit;
                 }
             } else {
                 header("HTTP/1.0 500 Internal Server Error");
                 echo json_encode(['error' => 'Controller not found']);
+                exit;
             }
         }
     }
