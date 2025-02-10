@@ -1,0 +1,102 @@
+version: '3.8'
+
+services:
+  user-service:
+    build:
+      context: ./user-service
+      dockerfile: Dockerfile
+    ports:
+      - "8001:80"
+    volumes:
+      - ./user-service:/var/www/html
+    depends_on:
+      - user-db
+    environment:
+      - DB_HOST=user-db
+      - DB_PORT=3306
+      - DB_DATABASE=${USER_DB_DATABASE}
+      - DB_USERNAME=${USER_DB_USERNAME}
+      - DB_PASSWORD=${USER_DB_PASSWORD}
+
+  product-service:
+    build:
+      context: ./product-service
+      dockerfile: Dockerfile
+    ports:
+      - "8002:80"
+    volumes:
+      - ./product-service:/var/www/html
+    depends_on:
+      - product-db
+    environment:
+      - DB_HOST=product-db
+      - DB_PORT=3306
+      - DB_DATABASE=${PRODUCT_DB_DATABASE}
+      - DB_USERNAME=${PRODUCT_DB_USERNAME}
+      - DB_PASSWORD=${PRODUCT_DB_PASSWORD}
+
+  order-service:
+    build:
+      context: ./order-service
+      dockerfile: Dockerfile
+    ports:
+      - "8003:80"
+    volumes:
+      - ./order-service:/var/www/html
+    depends_on:
+      - order-db
+      - rabbitmq
+    environment:
+      - DB_HOST=order-db
+      - DB_PORT=3306
+      - DB_DATABASE=${ORDER_DB_DATABASE}
+      - DB_USERNAME=${ORDER_DB_USERNAME}
+      - DB_PASSWORD=${ORDER_DB_PASSWORD}
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=${RABBITMQ_USER}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
+
+  user-db:
+    image: mysql:8.0
+    environment:
+      - MYSQL_DATABASE=${USER_DB_DATABASE}
+      - MYSQL_USER=${USER_DB_USERNAME}
+      - MYSQL_PASSWORD=${USER_DB_PASSWORD}
+      - MYSQL_ROOT_PASSWORD=${USER_DB_ROOT_PASSWORD}
+    volumes:
+      - user-db-data:/var/lib/mysql
+
+  product-db:
+    image: mysql:8.0
+    environment:
+      - MYSQL_DATABASE=${PRODUCT_DB_DATABASE}
+      - MYSQL_USER=${PRODUCT_DB_USERNAME}
+      - MYSQL_PASSWORD=${PRODUCT_DB_PASSWORD}
+      - MYSQL_ROOT_PASSWORD=${PRODUCT_DB_ROOT_PASSWORD}
+    volumes:
+      - product-db-data:/var/lib/mysql
+
+  order-db:
+    image: mysql:8.0
+    environment:
+      - MYSQL_DATABASE=${ORDER_DB_DATABASE}
+      - MYSQL_USER=${ORDER_DB_USERNAME}
+      - MYSQL_PASSWORD=${ORDER_DB_PASSWORD}
+      - MYSQL_ROOT_PASSWORD=${ORDER_DB_ROOT_PASSWORD}
+    volumes:
+      - order-db-data:/var/lib/mysql
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD}
+
+volumes:
+  user-db-data:
+  product-db-data:
+  order-db-data:
